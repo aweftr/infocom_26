@@ -1,7 +1,9 @@
+# %%
 import pandas as pd
 import numpy as np
 import gymnasium as gym
 from queue import PriorityQueue
+from typing import Optional
 
 def getData(path, double_thr=1e10):
     csv_data = pd.read_csv(path)
@@ -68,9 +70,9 @@ class Cluster:
         numa_diffs = np.abs(self.resources[:, 0] - self.resources[:, 1])
         return -np.sum(numa_diffs / np.array([self.cpu, self.mem]))
 
-
+# %%
 class SchedEnv(gym.Env):
-    def __init__(self, N, cpu, mem, data_path, double_thr=10, reward_type='basic', reward_weight=0):
+    def __init__(self, N, cpu, mem, data_path, double_thr=10, reward_type='basic', reward_weight=0, random_reset=False):
         super(SchedEnv, self).__init__()
         self.N = N
         self.cpu = cpu
@@ -80,9 +82,23 @@ class SchedEnv(gym.Env):
         self.reward_type = reward_type
         self.reward_weight = reward_weight
         self.total_wait_time = 0
+        self.random_reset = random_reset
+        if self.random_reset:
+            print("Warning: Random reset is on, index is of no usage.")
+        self.observation_space = gym.spaces.Box(0, np.array([self.cpu, self.mem]*self.N*2 + [64, 128, 1]), dtype=np.int16)
+        self.action_space = gym.spaces.Discrete(self.N*2)
 
-    def reset(self, index, N_vm=0, exceed_vm=0):
+
+    def reset(self, index=0, N_vm=0, exceed_vm=0, *, seed: Optional[int] = None, options: Optional[dict] = None):
         # Reset the cluster and environment states
+        super().reset(seed=seed)
+        if self.random_reset:
+            if index != 0:
+                print("Warning! Index and random_reset should not use simutaneously.")
+            index = self.np_random.integers(0, 100000, dtype=np.int32)
+        if N_vm == 0 and exceed_vm == 0:
+            raise Exception("You should set either N_vm or exceed_vm")
+
         self.cluster.reset()
         self.init_index = index
         self.index = index
@@ -133,6 +149,9 @@ class SchedEnv(gym.Env):
             self.bal_score = bal_score_current
 
         # Check if the environment should terminate
+        # It should be noted that there is no terminated in this environment
+        # VM will always leave and there is always space for new coming VM, regardless of the time
+        done = False
         if self.index >= len(self.data) - 1:
             done = True
         else:
@@ -210,3 +229,16 @@ class SchedEnv(gym.Env):
         elif attr_name == 'length_vm':
             return (self.index - self.init_index)
         return None
+
+
+
+# # %%
+# s = SchedEnv(5, 20, 40, "../data/Huawei-East-1-lt.csv", 10, random_reset=True)
+# s.reset()
+# for i in range(20):
+#     action = np.random.choice(np.where(s.get_attr('avail') == 1)[0])
+#     print(f"Action {action}, Available: {s.get_attr('full')}")
+#     obs, reward, done = s.step(action)
+#     print(f"Step {i}: Action {action}, Reward {reward}, Done {done}, time {s.t}, obs {obs['obs']}")
+#     if done:
+#         break
