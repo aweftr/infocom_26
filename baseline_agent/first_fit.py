@@ -1,11 +1,10 @@
 ''' Select the first NUMA or server that can accommodate the VM request '''
 import numpy as np
 
-def first_fit_one_env(avail):  
-    # Select the first available NUMA or server that can place the VM
-    return np.where(avail == 1)[0][0]  
-
 def first_fit(state):
-    avails = state["avail"].copy()
-    action = first_fit_one_env(avails)
+    pm_avail = state["avail"][1:]
+    if np.any(pm_avail):
+        action = (np.where(pm_avail)[0] + 1)[0]
+    else:
+        action = 0 # Open a new PM if no PM is available!
     return action

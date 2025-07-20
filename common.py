@@ -10,7 +10,7 @@ def linear_decay(epoch, max_epoch, eps_start, eps_end):
 
 def trimmed_mean(data, percentage=0.1):
     ''' return the trimmed mean of data by excluding first percentage and last percentage, total 2*percentage data '''
-    if not data:
+    if len(data) == 0:
         raise ValueError("The data list is empty")
 
     if not 0 <= percentage < 0.5:

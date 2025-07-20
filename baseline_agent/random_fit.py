@@ -1,10 +1,10 @@
 ''' Random '''
 import numpy as np
 
-def random_one_env(avail):  
-    return np.random.choice(np.where(avail == 1)[0]) 
-
 def random_fit(state):
-    avail = state["avail"].copy()
-    action = random_one_env(avail)
+    pm_avail = state["avail"][1:]
+    if np.any(pm_avail):
+        action = np.random.choice(np.where(pm_avail)[0] + 1)
+    else:
+        action = 0 # Open a new PM if no PM is available!
     return action

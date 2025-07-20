@@ -1,21 +1,23 @@
 ''' Evaluate the results of First Fit and Balance Fit '''
 
 import numpy as np
-from schedgym.sched_env import SchedEnv 
+from schedgym.sched_env_minusage import SchedEnv 
 from baseline_agent import get_fit_func
 from tqdm import trange
 from common import trimmed_mean, EarlyStopping
-from ppo_agent import Agent, flatten_observation, MyVectorEnv
+from ppo_agent import *
 import os
 import random
 import torch
 import torch.optim as optim
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.tensorboard import SummaryWriter
 import time
 from dataclasses import dataclass
+import itertools
 DATA_PATH = "data/Huawei-East-1-lt.csv"
 
-use_gpu = False
+use_gpu = True
 device = torch.device("cuda" if torch.cuda.is_available() and use_gpu else "cpu")
 
 @dataclass
@@ -30,7 +32,7 @@ class Args:
     """if toggled, cuda will be enabled by default"""
     validate_interval: int = 20
     """Validate the agent per interval to avoid overfitting by early stopping"""
-    valide_patience: int = 30
+    valide_patience: int = 20
     """Early stop patience"""
 
     # Environment specific arguments
@@ -44,8 +46,8 @@ class Args:
     """If request mem >= double_thr, it should be scheduled to two NUMAs"""
     data_path: str = "data/Huawei-East-1-lt.csv"
     """The input data path"""
-    exceed_vm: int = 40
-    """Allocate another exceed_vm after the first VM has to wait"""
+    N_vm: int = 1000
+    """The VM sequecne length"""
 
     total_timesteps: int = 500000
     """total timesteps of the experiments"""
@@ -68,22 +70,9 @@ class Args:
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
 
-def run_episode(env: SchedEnv, agent, index, N_vm):
-    # 2. Testing
-    state = env.reset(index, N_vm=N_vm)
-    done = False
-    while not done:
-        with torch.no_grad():
-            state_flatten = torch.Tensor(flatten_observation(state)).to(device)
-            avail = torch.tensor(state["avail"], dtype=torch.bool).to(device)
-            action = agent.get_action_inference(state_flatten, avail=avail)
-            # breakpoint()
-            state, _, done = env.step(action)
-
-    return env.get_attr('total_wait_time')
 
 def make_env():
-    return SchedEnv(args.PM_number, args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr, random_reset=True)
+    return SchedEnv(args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr, random_reset=True)
 
 # Environment parameters
 args = Args()
@@ -103,21 +92,20 @@ np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 torch.backends.cudnn.deterministic = args.torch_deterministic
 
-envs = MyVectorEnv(make_env, args.num_envs, args.exceed_vm)
+envs = MyVectorEnv(make_env, args.num_envs, args.N_vm)
 # env = SchedEnv(args.PM_number, args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr, random_reset=True)
 # env.reset(N_vm=10)
-# breakpoint()
-agent = Agent(envs.envs[0]).to(device)
-bal_fit = get_fit_func(2, args.PM_cpu_oneNUME, args.PM_mem_oneNUME)    # Balance Fit agent
+
+agent = TransformerPPOAgent(3, 2).to(device)
+first_fit = get_fit_func(0, args.PM_cpu_oneNUME, args.PM_mem_oneNUME)    # Frist Fit agent
 optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
-es = EarlyStopping(patience=args.valide_patience, path=f"runs/{run_name}/model.pth", delta=-0.1)
+es = EarlyStopping(patience=args.valide_patience, path=f"runs/{run_name}/model.pth", delta=-0.01)
 
 # collect data
-obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
-avails = torch.zeros((args.num_steps, args.num_envs, envs.single_action_space.n), dtype=torch.bool).to(device)
+actions = torch.zeros((args.num_steps, args.num_envs)).to(device)
 dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
+
 
 # TRY NOT TO MODIFY: start the game
 global_step = 0
@@ -125,25 +113,41 @@ start_time = time.time()
 next_obs, next_avail = envs.reset(seed=args.seed)
 for idx, env in enumerate(envs.envs):
     print(f"Init index of env {idx}: {env.init_index}")
-next_obs = torch.Tensor(next_obs).to(device)
-next_avail = torch.tensor(next_avail, dtype=torch.bool).to(device)
 next_done = torch.zeros(args.num_envs).to(device)
 
+
 def ppotorchToNumpy(obs, avails):
-    obs = obs.cpu().numpy()
-    avails = avails.cpu().numpy()
     actions = []
     for i in range(args.num_envs):
-        tobs = obs[i][:-3].reshape(-1, 2, 2)
-        tfeat = obs[i][-3:]
+        vmfeatures = obs[0]
+        pmfeatures = obs[1]
         tavail = avails[i]
-        o = {"obs": tobs, "feat": tfeat, "avail":tavail}
-        # breakpoint()
-        action = bal_fit(o)
+        o = {"obs": pmfeatures, "feat": vmfeatures, "avail": tavail}
+        action = first_fit(o)
         actions.append(action)
     return np.array(actions)
 
+def getFeaturesMasks(obs: np.array, avails):
+    vm_features = torch.Tensor(np.array(obs[:, 0].tolist(), dtype=float)).to(device)
+    # vm_features = torch.Tensor(b_obs[mb_inds][:, 0]).to(device)
+    pm_tensor_list = [torch.Tensor(pm) for pm in obs[:, 1]]
+    pm_padded = pad_sequence(pm_tensor_list, batch_first=True).reshape(args.minibatch_size, -1, 2).to(device)
+    pm_mask = torch.tensor([
+        [1] * (pm.shape[0] // 2 + 1) + [0] * (pm_padded.shape[1] - pm.shape[0] // 2)
+        for pm in pm_tensor_list
+    ], dtype=torch.bool).to(device)
+
+    action_mask = np.zeros((args.minibatch_size, pm_padded.shape[1] + 1))
+    for idx, avail in enumerate(avails):
+        action_mask[idx][:len(avail)] = avail
+    action_mask = torch.tensor(action_mask, dtype=torch.bool).to(device)
+
+    return vm_features, pm_padded, pm_mask, action_mask
+
+
 for iteration in range(args.num_iterations):
+    obs = []
+    avails = []
     if args.anneal_lr:
         frac = 1.0 - (iteration - 1.0) / args.num_iterations
         lrnow = frac * args.learning_rate
@@ -151,26 +155,29 @@ for iteration in range(args.num_iterations):
 
     for step in range(0, args.num_steps):
         global_step += args.num_envs
-        obs[step] = next_obs
-        avails[step] = next_avail
+        obs.append(next_obs)
+        avails.append(next_avail)
+        # obs[step] = next_obs
+        # avails[step] = next_avail
         dones[step] = next_done
 
-        bal_actions = ppotorchToNumpy(next_obs, next_avail)
-        actions[step] = torch.tensor(bal_actions).to(device)
+        ff_actions = ppotorchToNumpy(next_obs, next_avail)
+        actions[step] = torch.tensor(ff_actions).to(device)
 
-        next_obs, reward, truncations, avail, infos = envs.step(bal_actions)
-        next_obs = torch.Tensor(next_obs).to(device)
-        next_avail = torch.tensor(avail).to(device)
-        next_done = torch.zeros(args.num_envs).to(device)
+        next_obs, reward, truncations, next_avail, infos = envs.step(ff_actions)
+        next_done = torch.tensor(truncations).to(device)
+        
 
         for idx, info in enumerate(infos):
             if "done_info" in info:
-                print(f"global_step={global_step}, episide_wait_time={info['total_wait_time']}")
-                writer.add_scalar("charts/episodic_wait_time", info['total_wait_time'], global_step)
+                print(f"global_step={global_step}, total_pm_usage={info['total_pm_usage']}")
+                writer.add_scalar("charts/episodic_pm_usage", info['total_pm_usage'], global_step)
     # flatten the batch
-    b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
-    b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
-    b_avails = avails.reshape((-1, envs.single_action_space.n))
+    
+    b_obs = np.array(obs, dtype=np.object_).reshape(-1, 2)
+    b_actions = actions.reshape(-1)
+    b_avails = np.array(avails, dtype=np.object_).reshape(-1)
+
     # Optimizing the policy and value network
     b_inds = np.arange(args.batch_size)
     clipfracs = []
@@ -180,7 +187,11 @@ for iteration in range(args.num_iterations):
             end = start + args.minibatch_size
             mb_inds = b_inds[start:end]
 
-            _, logprob, entropy, value = agent.get_action_and_value(b_obs[mb_inds], action=b_actions.long()[mb_inds], avail=b_avails[mb_inds])
+            vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(b_obs[mb_inds], b_avails[mb_inds])
+            # print(b_actions.long()[mb_inds].max())
+            # print(pm_padded.shape)
+            # breakpoint()
+            _, logprob, entropy, value = agent.get_action_and_value(vm_features, pm_padded, pm_mask, action_mask=action_mask, action=b_actions.long()[mb_inds])
             loss = -logprob.mean()
             optimizer.zero_grad()
             loss.backward()
@@ -189,7 +200,7 @@ for iteration in range(args.num_iterations):
     writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
     writer.add_scalar("losses/BCLoss", loss, global_step)
     if (iteration + 1) % args.validate_interval == 0:
-        writer.add_scalar("val Loss", loss, global_step)
+        # writer.add_scalar("val Loss", loss, global_step)
         es(loss, agent)
         if es.early_stop:
             print("Early stop! Val loss: {}".format(es.val_loss_min))
@@ -198,5 +209,5 @@ for iteration in range(args.num_iterations):
             print("\tVal loss: {}".format(loss))
 
 envs.close()
-writer.close()
+# writer.close()
 # torch.save(agent.state_dict(), f"runs/{run_name}/model.pth")
