@@ -22,10 +22,12 @@ class PM:
         self.mem = mem
         self.resources = np.full((2, 2), [self.cpu, self.mem], dtype=float)
         self.stored_vms = {}
+        self.recent_usage_time = 0
 
     def reset(self):
         self.resources = np.full((2, 2), [self.cpu, self.mem], dtype=float)
         self.stored_vms = {}
+        self.recent_usage_time = 0
 
     def handle(self, action, request):
         # action > 0
@@ -46,6 +48,7 @@ class PM:
             self.resources[numa] = new_resources
         # Store VM information
         self.stored_vms[request["vmid"]] = (self.id, numa, request["is_double"])
+        self.recent_usage_time = request["at"]
 
     def is_empty(self):
         return np.all(

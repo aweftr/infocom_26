@@ -32,7 +32,31 @@ def run_episode(env: SchedEnv, agent, index, N_vm):
 
     return env.total_pm_usage, env.maximum_pm_num
 
-def runEvaluate(env, agent):
+def run_episode_m2f(env: SchedEnv, agent, index, N_vm):
+    # env = copy.deepcopy(env)
+    state = env.reset(index, N_vm=N_vm)
+    done = False
+    while not done:
+        action = agent(state, env.cluster)
+        # print(state, action)
+        # breakpoint()
+        state, _, done = env.step(action)
+
+    return env.total_pm_usage, env.maximum_pm_num
+
+def run_episode_bal(env: SchedEnv, agent, index, N_vm):
+    # env = copy.deepcopy(env)
+    state = env.reset(index, N_vm=N_vm)
+    done = False
+    while not done:
+        action = agent(state, "sum")
+        # print(state, action)
+        # breakpoint()
+        state, _, done = env.step(action)
+
+    return env.total_pm_usage, env.maximum_pm_num
+
+def runEvaluate(env, agent, run_episode):
     args = [(env, agent, valid_inds[episode], N_vm) for episode in range(num_episodes)]
     with Pool(processes=8) as pool:
         result = pool.starmap(run_episode, args)
@@ -44,6 +68,7 @@ def runEvaluate(env, agent):
     print(f"{agent.__name__} pm usage mean: {np.mean(res)}")
     print(f"{agent.__name__} max pm mean: {np.mean(maxi)}")
 
+
 def main():
     # Environment parameters
     cpu = 40  # Total CPU per NUMA
@@ -53,11 +78,16 @@ def main():
     first_fit = get_fit_func(0, cpu, mem)  # First Fit agent
     best_fit = get_fit_func(1, cpu, mem)
     # run_episode(env, best_fit, 0, N_vm)
-    # bal_fit = get_fit_func(2, cpu, mem)    # Balance Fit agent
+    bal_fit = get_fit_func(2, cpu, mem)    # Balance Fit agent
     random_fit = get_fit_func(3, cpu, mem)
-    runEvaluate(env, first_fit)
-    runEvaluate(env, best_fit)
-    runEvaluate(env, random_fit)
+    m2f_fit = get_fit_func(4, cpu, mem)
+    runEvaluate(env, first_fit, run_episode)
+    runEvaluate(env, best_fit, run_episode)
+    runEvaluate(env, random_fit, run_episode)
+    # run_episode_m2f(env, m2f_fit, 0, N_vm)
+    # run_episode_bal(env, bal_fit, 0, N_vm, "max")
+    runEvaluate(env, m2f_fit, run_episode_m2f)
+    runEvaluate(env, bal_fit, run_episode_bal)
 
     # Run multiple episodes
     # res_b = []  # Results for Balance Fit
@@ -97,12 +127,24 @@ def main():
     first fit pm usage trimmed mean: 82931.2575
     first fit pm usage mean: 94520.816
     first fit max pm mean: 8.005
+    balance_fit_max pm usage trimmed mean: 85119.0975
+    balance_fit_max pm usage mean: 96639.953
+    balance_fit_max max pm mean: 7.86
+    balance_fit_sum pm usage trimmed mean: 85374.07875
+    balance_fit_sum pm usage mean: 97015.014
+    balance_fit_sum max pm mean: 7.903
     best_fit pm usage trimmed mean: 86592.45625
     best_fit pm usage mean: 99468.216
     best_fit max pm mean: 8.14
     random fit pm usage trimmed mean: 90808.88625
     random fit pm usage mean: 104433.836
     random fit max pm mean: 8.09
+    movetofront_fit pm usage trimmed mean: 93487.46
+    movetofront_fit pm usage mean: 107088.683
+    movetofront_fit max pm mean: 8.272
+    ppoBCpre pm usage trimmed mean: 83062.615
+    ppoBCpre pm usage mean: 94714.161
+    ppoBCpre max pm mean: 8.023
     '''
 
 if __name__ == "__main__":

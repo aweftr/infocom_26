@@ -1,15 +1,14 @@
-''' Select the NUMA or server where the most recently installed VM was placed '''
+''' Select the NUMA or server where the last recently installed VM was placed '''
 import numpy as np
 
-def movetofront_one_env(avail, action0):  
-    # If the most recently used NUMA/server (action0) is available, return it
-    if avail[action0] == 1:
-        return action0
+def movetofront_fit(state, cluster):
+    avails = state["avail"][1:]
+    recent_time_avail = {}
+    for idx, avail in enumerate(avails):
+        if avail:
+            recent_time_avail[idx] = cluster.active_pms[idx // 2].recent_usage_time
+    if len(recent_time_avail) == 0:
+        return 0
     else:
-        # Otherwise, select the first available NUMA/server
-        return np.where(avail == 1)[0][0]
-
-def movetofront_fit(state, action0):
-    avails = state["avail"].copy()
-    action = movetofront_one_env(avails, action0)
-    return action
+        action = sorted(recent_time_avail.items(), key=lambda x: x[1])[0][0] + 1
+        return action
