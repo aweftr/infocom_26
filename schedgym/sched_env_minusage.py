@@ -23,6 +23,7 @@ class PM:
         self.resources = np.full((2, 2), [self.cpu, self.mem], dtype=float)
         self.stored_vms = {}
         self.recent_usage_time = 0
+        self.pm_type = None
 
     def reset(self):
         self.resources = np.full((2, 2), [self.cpu, self.mem], dtype=float)
@@ -47,7 +48,7 @@ class PM:
                 raise ValueError("Insufficient resources for allocation")
             self.resources[numa] = new_resources
         # Store VM information
-        self.stored_vms[request["vmid"]] = (self.id, numa, request["is_double"])
+        self.stored_vms[request["vmid"]] = (self.id, numa, request["is_double"], request["at"], request["lt"])
         self.recent_usage_time = request["at"]
 
     def is_empty(self):
@@ -55,11 +56,29 @@ class PM:
             self.resources == np.array([[self.cpu, self.mem], [self.cpu, self.mem]])
         )
 
+    def updatetype(self, split, ctime):
+        if self.pm_type is None:
+            return None
+        
+        vmtypes = []
+        # 1 is long, 0 is short
+        for vm in self.stored_vms:
+            last_time = self.stored_vms[vm][4] - (ctime - self.stored_vms[vm][3])
+            vmtypes.append(1 if last_time > split else 0)
+        vmtypes = np.array(vmtypes)
+        if np.any(vmtypes):
+            self.pm_type = 1
+            return 1
+        else:
+            self.pm_type = 0
+            return 0
+
+
     def delete(self, request):
         if request["vmid"] not in self.stored_vms:
             raise ValueError("Delete unexist VM")
 
-        serverid, numa, is_double = self.stored_vms.pop(request["vmid"])
+        serverid, numa, is_double, *rest = self.stored_vms.pop(request["vmid"])
         if is_double:
             self.resources += np.array([request["cpu"] / 2, request["mem"] / 2])
         else:
@@ -293,6 +312,7 @@ class SchedEnv(gym.Env):
             "obs": self.cluster.describe(),
             "feat": np.array([request["cpu"], request["mem"], request["is_double"]]),
             "avail": self.cluster.check_request(request),
+            "lt": request["lt"]
         }
 
 

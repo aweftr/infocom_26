@@ -3,8 +3,9 @@ from .best_fit    import best_fit
 from .balance_fit import balance_fit
 from .random_fit  import random_fit
 from .move_to_front import movetofront_fit
+from .clairvoyant_ltfit import clairvoyant_ltfit
 
-get_action_funcs = [first_fit, best_fit, balance_fit, random_fit, movetofront_fit]
+get_action_funcs = [first_fit, best_fit, balance_fit, random_fit, movetofront_fit, clairvoyant_ltfit]
 
 def get_fit_func(index, total_cpu, total_mem):
     fit_func = get_action_funcs[index]
