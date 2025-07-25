@@ -36,8 +36,6 @@ class Args:
     """Early stop patience"""
 
     # Environment specific arguments
-    PM_number: int = 5
-    """The total number of PM in the cluster"""
     PM_cpu_oneNUME: int = 40
     """The cpu capacity of PM in one NUMA"""
     PM_mem_oneNUME: int = 90
@@ -49,7 +47,7 @@ class Args:
     N_vm: int = 1000
     """The VM sequecne length"""
 
-    total_timesteps: int = 500000
+    total_timesteps: int = 250000
     """total timesteps of the experiments"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""

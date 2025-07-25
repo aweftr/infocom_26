@@ -8,7 +8,9 @@ from tqdm import trange
 from multiprocessing import Pool
 import copy
 from common import trimmed_mean
-DATA_PATH = "data/Huawei-East-1-lt.csv"
+# DATA_PATH = "data/Huawei-East-1-lt.csv"
+# DATA_PATH = "data/Huawei-East-1-ltlogNormalNoise.csv"
+DATA_PATH = "data/Huawei-East-1-ltGaussianNoise.csv"
 
 # A. Validation Result
 # valid_inds = np.load('data/valid_random_time_150.npy')
@@ -17,7 +19,7 @@ DATA_PATH = "data/Huawei-East-1-lt.csv"
 # B. Test Result
 valid_inds = np.load('data/test_random_time_1000.npy')
 num_episodes = 1000
-N_vm = 10000
+N_vm = 1000
 lt_thre = 8000
 
 def run_episode(env: SchedEnv, agent, index, N_vm):
@@ -115,11 +117,13 @@ def main():
     clairvoyant_fit = get_fit_func(5, cpu, mem)
     # run_episode_online(env, clairvoyant_fit, 0, N_vm)
     # print(env.total_pm_usage)
-    runEvaluate(env, first_fit, run_episode)
-    runEvaluate(env, best_fit, run_episode)
-    runEvaluate(env, random_fit, run_episode)
-    runEvaluate(env, m2f_fit, run_episode_m2f)
-    runEvaluate(env, bal_fit, run_episode_bal)
+    # run_episode_online(env, predNoise_ltfit, 0, N_vm, lt_thre)
+
+    # runEvaluate(env, first_fit, run_episode)
+    # runEvaluate(env, best_fit, run_episode)
+    # runEvaluate(env, random_fit, run_episode)
+    # runEvaluate(env, m2f_fit, run_episode_m2f)
+    # runEvaluate(env, bal_fit, run_episode_bal)
     
     runEvaluateOnline(env, clairvoyant_fit, run_episode_online, lt_thre)
     # run_episode_m2f(env, m2f_fit, 0, N_vm)
@@ -183,6 +187,9 @@ def main():
     ppoBCpre pm usage trimmed mean: 83062.615
     ppoBCpre pm usage mean: 94714.161
     ppoBCpre max pm mean: 8.023
+    clairvoyant_ltfit 8000 pm usage trimmed mean: 94251.50875
+    clairvoyant_ltfit 8000 pm usage mean: 105909.299
+    clairvoyant_ltfit 8000 max pm mean: 8.897
 
     10000 VMs
     first_fit pm usage trimmed mean: 2362719.755

@@ -13,16 +13,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import tyro
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
+from torch.nn.utils.rnn import pad_sequence
 
-from schedgym.sched_env import SchedEnv
-from ppo_agent import Agent, MyVectorEnv
+from schedgym.sched_env_minusage import SchedEnv 
+from ppo_agent import *
 from baseline_agent import get_fit_func
 from common import linear_decay, trimmed_mean, EarlyStopping
 valid_inds = np.load('data/valid_random_time_150.npy')
-valid_Nvms = np.load("data/valid_random_Nvm.npy")
+valid_num = 150
 
 @dataclass
 class Args:
@@ -36,14 +36,14 @@ class Args:
     """if toggled, cuda will be enabled by default"""
     validate_interval: int = 20
     """Validate the agent per interval to avoid overfitting by early stopping"""
-    valide_patience: int = 30
+    valide_patience: int = 20
     """Early stop patience"""
     concurrent_processes: int = 8
     """number of concurrent processes to valide the agent"""
 
     # Environment specific arguments
-    PM_number: int = 5
-    """The total number of PM in the cluster"""
+    MAX_PM_NUM: int = 200
+    """Maximum number of PMs, avoid too long input tensor"""
     PM_cpu_oneNUME: int = 40
     """The cpu capacity of PM in one NUMA"""
     PM_mem_oneNUME: int = 90
@@ -52,8 +52,8 @@ class Args:
     """If request mem >= double_thr, it should be scheduled to two NUMAs"""
     data_path: str = "data/Huawei-East-1-lt.csv"
     """The input data path"""
-    exceed_vm: int = 40
-    """Allocate another exceed_vm after the first VM has to wait"""
+    N_vm: int = 1000
+    """The VM sequecne length"""
 
     # Algorithm specific arguments
     total_timesteps: int = 50000000
@@ -97,13 +97,6 @@ class Args:
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    return layer
-
-def flatten_observation(observation):
-    return np.concatenate((observation["obs"].reshape(-1), observation["feat"]))
 
 def run_episode(env: SchedEnv, agent, index, N_vm, device="cpu"):
     # 2. Testing
@@ -119,17 +112,25 @@ def run_episode(env: SchedEnv, agent, index, N_vm, device="cpu"):
 
     return env.get_attr('total_wait_time')
 
-def val(agent: Agent, args: Args):
-    env = SchedEnv(args.PM_number, args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr)
+def val(valid_envs: MyVectorEnvWithIndex, agent: Agent):
+    obs, avail = valid_envs.reset(valid_inds)
+    
+    total_pm_usage = []
+    infos = None
+    with torch.no_grad():
+        for i in range(args.N_vm):
+            obs = np.array(obs, dtype=np.object_)
+            avail = np.array(avail, dtype=np.object_)
+
+            vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(obs, avail)
+            actions = agent.get_action(vm_features, pm_padded, pm_mask, action_mask)
+            obs, rewards, truncated, avail, infos = valid_envs.step(actions)
+
+    for i in range(valid_num):
+        total_pm_usage.append(infos[i]["total_pm_usage"])
     # res_ppo = []
-    myargs = [(env, agent, valid_inds[episode], valid_Nvms[episode]) for episode in range(150)]
-    with Pool(processes=args.concurrent_processes) as pool:
-        res_ppo = pool.starmap(run_episode, myargs)
-    # for episode in range(150):
-    #     index = valid_inds[episode]
-    #     N_vm = valid_Nvms[episode]
-    #     res_ppo.append(run_episode(env, agent, index, N_vm))
-    return trimmed_mean(res_ppo)
+
+    return trimmed_mean(total_pm_usage)
 # %%
 # args = tyro.cli(Args)
 args = Args()
@@ -155,11 +156,14 @@ device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cp
 # env = SchedEnv(args.PM_number, args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr)
 
 def make_env():
-    return SchedEnv(args.PM_number, args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr, random_reset=True)
+    return SchedEnv(args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr, random_reset=True)
 
+def make_valid_env():
+    return SchedEnv(args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr)
 # %%
-envs = MyVectorEnv(make_env, args.num_envs, exceed_vm=args.exceed_vm)
+envs = MyVectorEnv(make_env, args.num_envs, N_vm=args.N_vm)
 
+valid_envs = MyVectorEnvWithIndex(make_valid_env, valid_num, N_vm=args.N_vm)
 # obs, avails = envs.reset()
 # while True:
 #     actions = envs.sample_action(avails)
@@ -170,8 +174,8 @@ envs = MyVectorEnv(make_env, args.num_envs, exceed_vm=args.exceed_vm)
 #         break
 
 
-agent = Agent(envs.envs[0]).to(device)
-agent.load_state_dict(torch.load(os.path.join("runs", "ppo_train__1__1752492632", "model.pth")))
+agent = TransformerPPOAgent(3, 2).to(device)
+agent.load_state_dict(torch.load(os.path.join("runs", "ppo_BCpretrain__1__1753418132", "model.pth")))
 
 optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
@@ -179,9 +183,9 @@ es = EarlyStopping(patience=args.valide_patience, path=f"runs/{run_name}/model.p
 # %%
 
 # ALGO Logic: Storage setup
-obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
-avails = torch.zeros((args.num_steps, args.num_envs, envs.single_action_space.n), dtype=torch.bool).to(device)
+# obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
+actions = torch.zeros((args.num_steps, args.num_envs)).to(device)
+# avails = torch.zeros((args.num_steps, args.num_envs, envs.single_action_space.n), dtype=torch.bool).to(device)
 logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
 rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
 dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
@@ -194,14 +198,33 @@ start_time = time.time()
 next_obs, next_avail = envs.reset(seed=args.seed)
 for idx, env in enumerate(envs.envs):
     print(f"Init index of env {idx}: {env.init_index}")
-next_obs = torch.Tensor(next_obs).to(device)
-next_avail = torch.tensor(next_avail, dtype=torch.bool).to(device)
+# next_obs = torch.Tensor(next_obs).to(device)
+# next_avail = torch.tensor(next_avail, dtype=torch.bool).to(device)
 next_done = torch.zeros(args.num_envs).to(device)
+
+def getFeaturesMasks(obs: np.array, avails):
+    vm_features = torch.Tensor(np.array(obs[:, 0].tolist(), dtype=float)).to(device)
+    # vm_features = torch.Tensor(b_obs[mb_inds][:, 0]).to(device)
+    pm_tensor_list = [torch.Tensor(pm) for pm in obs[:, 1]]
+    pm_padded = pad_sequence(pm_tensor_list, batch_first=True).reshape(obs.shape[0], -1, 2).to(device)
+    pm_mask = torch.tensor([
+        [1] * (pm.shape[0] // 2 + 1) + [0] * (pm_padded.shape[1] - pm.shape[0] // 2)
+        for pm in pm_tensor_list
+    ], dtype=torch.bool).to(device)
+
+    action_mask = np.zeros((obs.shape[0], pm_padded.shape[1] + 1))
+    for idx, avail in enumerate(avails):
+        action_mask[idx][:len(avail)] = avail
+    action_mask = torch.tensor(action_mask, dtype=torch.bool).to(device)
+
+    return vm_features, pm_padded, pm_mask, action_mask
 
 # %%
 for iteration in range(1, args.num_iterations + 1):
     # Consider the value of the truncated observation!
     done_values = {}
+    obs = []
+    avails = []
     # Annealing the rate if instructed to do so.
     if args.anneal_lr:
         frac = 1.0 - (iteration - 1.0) / args.num_iterations
@@ -210,41 +233,50 @@ for iteration in range(1, args.num_iterations + 1):
 
     for step in range(0, args.num_steps):
         global_step += args.num_envs
-        obs[step] = next_obs
-        avails[step] = next_avail
+        obs.append(next_obs)
+        avails.append(next_avail)
         dones[step] = next_done
 
+        tobs = np.array(next_obs, dtype=np.object_)
+        tavails = np.array(next_avail, dtype=np.object_)
+        vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(tobs, tavails)
         # ALGO LOGIC: action logic
         with torch.no_grad():
-            action, logprob, _, value = agent.get_action_and_value(next_obs, avail=next_avail)
+            action, logprob, _, value = agent.get_action_and_value(vm_features, pm_padded, pm_mask, action_mask)
             values[step] = value.flatten()
+        for idx, act in enumerate(action.cpu().numpy()):
+            if act > args.MAX_PM_NUM:
+                action[idx] = np.random.choice(np.where(next_avail[idx])[0][1:])
         actions[step] = action
         logprobs[step] = logprob
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, reward, truncations, avail, infos = envs.step(action.cpu().numpy())
+        next_obs, reward, truncations, next_avail, infos = envs.step(action.cpu().numpy())
         # next_done = np.logical_or(terminations, truncations)
         rewards[step] = torch.tensor(reward).to(device).view(-1)
-        next_obs = torch.Tensor(next_obs).to(device)
-        next_avail = torch.tensor(avail).to(device)
+        
         next_done = torch.zeros(args.num_envs).to(device)
         
         for idx, info in enumerate(infos):
             if "done_info" in info:
-                print(f"global_step={global_step}, episide_wait_time={info['total_wait_time']}")
+                print(f"global_step={global_step}, total_pm_usage={info['total_pm_usage']}")
                 if step not in done_values.keys():
                     done_values[step] = torch.zeros(args.num_envs).to(device)
+                tobs = np.array(flatten_observation(info["done_info"]), dtype=np.object_).reshape(1, 2)
+                tavail = info["done_info"]["avail"].reshape(1, -1)
+                vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(tobs, tavail)
                 with torch.no_grad():
-                    done_values[step][idx] = agent.critic(torch.Tensor(flatten_observation(info["done_info"])).to(device))
+                    done_values[step][idx] = agent.get_value(vm_features, pm_padded, pm_mask)
                 next_done[idx] = 1
-                # torch.Tensor(flatten_observation(info["done_info"])).to(device)
-                writer.add_scalar("charts/episodic_wait_time", info['total_wait_time'], global_step)
-                # breakpoint()
-
+                writer.add_scalar("charts/total_pm_usage", info['total_pm_usage'], global_step)
     
     # bootstrap value if not done
     with torch.no_grad():
-        next_value = agent.get_value(next_obs).reshape(1, -1)
+        tobs = np.array(next_obs, dtype=np.object_)
+        tavails = np.array(next_avail, dtype=np.object_)
+        vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(tobs, tavails)
+        next_value = agent.get_value(vm_features, pm_padded, pm_mask).reshape(1, -1)
+        
         advantages = torch.zeros_like(rewards).to(device)
         lastgaelam = 0
         for t in reversed(range(args.num_steps)):
@@ -263,10 +295,11 @@ for iteration in range(1, args.num_iterations + 1):
         returns = advantages + values
 
     # flatten the batch
-    b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+    
+    b_obs = np.array(obs, dtype=np.object_).reshape(-1, 2)
     b_logprobs = logprobs.reshape(-1)
-    b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
-    b_avails = avails.reshape((-1, envs.single_action_space.n))
+    b_actions = actions.reshape(-1)
+    b_avails = np.array(avails, dtype=np.object_).reshape(-1)
     b_advantages = advantages.reshape(-1)
     b_returns = returns.reshape(-1)
     b_values = values.reshape(-1)
@@ -280,7 +313,8 @@ for iteration in range(1, args.num_iterations + 1):
             end = start + args.minibatch_size
             mb_inds = b_inds[start:end]
 
-            _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], action=b_actions.long()[mb_inds], avail=b_avails[mb_inds])
+            vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(b_obs[mb_inds], b_avails[mb_inds])
+            _, newlogprob, entropy, newvalue = agent.get_action_and_value(vm_features, pm_padded, pm_mask, action_mask=action_mask, action=b_actions.long()[mb_inds])
             # breakpoint()
             logratio = newlogprob - b_logprobs[mb_inds]
             ratio = logratio.exp()
@@ -342,11 +376,10 @@ for iteration in range(1, args.num_iterations + 1):
     print("SPS:", int(global_step / (time.time() - start_time)))
     writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
     if (iteration + 1) % args.validate_interval == 0:
-        cpu_agent = copy.deepcopy(agent)
-        cpu_agent.to("cpu")
-        val_loss = val(cpu_agent, args)
+        val_loss = val(valid_envs, agent)
+        # breakpoint()
         writer.add_scalar("val Loss", val_loss, global_step)
-        es(val_loss, cpu_agent)
+        es(val_loss, agent)
         if es.early_stop:
             print("Early stop! Val loss: {}".format(es.val_loss_min))
             break

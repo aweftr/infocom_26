@@ -54,7 +54,7 @@ class Agent(nn.Module):
 
 # %%
 class TransformerPPOAgent(nn.Module):
-    def __init__(self, vm_dim, pm_dim, d_model=128, nhead=4, num_layers=2, max_pms=100):
+    def __init__(self, vm_dim, pm_dim, d_model=128, nhead=4, num_layers=2, max_pms=200):
         super().__init__()
         self.d_model = d_model
         self.max_pms = max_pms
@@ -135,8 +135,13 @@ class TransformerPPOAgent(nn.Module):
         logits = self.policy_head(encoded).squeeze(-1)  # [B, 1 + N]
         logits = logits.masked_fill(~action_mask, -1e10)
         # logits = logits.masked_fill((action_mask == 0), -1e10)
-        action = torch.argmax(logits)
+        action = torch.argmax(logits, dim=1)
         return action
+    
+    def get_value(self, vm_features, pm_features, pm_mask):
+        encoded = self.forward(vm_features, pm_features, pm_mask)
+        value = self.value_head(encoded[:, 0])
+        return value
 
 # # %%
 # a = TransformerPPOAgent(3, 2)
@@ -183,6 +188,57 @@ class MyVectorEnv:
                 info["done_info"] = o
                 info["total_pm_usage"] = env.total_pm_usage
                 o = env.reset(N_vm=self.N_vm)
+            obs.append(flatten_observation(o))
+            rewards.append(r)
+            truncated.append(done)
+            avails.append(o["avail"])
+            infos.append(info)
+        return (
+            obs,
+            np.array(rewards),
+            np.array(truncated),
+            avails,
+            infos
+        )
+    
+    def sample_action(self, avails):
+        sampled_action = []
+        for i, row in enumerate(avails):
+            row_true_indices = np.where(row)[0]
+            if len(row_true_indices) > 0:
+                sample = np.random.choice(row_true_indices)
+                sampled_action.append(sample)
+        sampled_action = np.array(sampled_action)
+        return sampled_action
+    
+    def close(self):
+        for env in self.envs:
+            env.close()
+
+class MyVectorEnvWithIndex:
+    def __init__(self, make_env: Callable, num_envs, N_vm):
+        self.num_envs = num_envs
+        self.envs = [make_env() for _ in range(num_envs)]
+        self.N_vm = N_vm
+        
+
+    def reset(self, indices, seed=None, options=None):
+        obs = []
+        avail = []
+        for i, env in enumerate(self.envs):
+            observation = env.reset(N_vm=self.N_vm, index=indices[i])
+            obs.append(flatten_observation(observation))
+            avail.append(observation["avail"])
+        return obs, avail
+
+    def step(self, actions):
+        obs, rewards, truncated, avails, infos = [], [], [], [], []
+        for env, action in zip(self.envs, actions):
+            info = {}
+            o, r, done = env.step(action) 
+            if done:
+                info["done_info"] = o
+                info["total_pm_usage"] = env.total_pm_usage
             obs.append(flatten_observation(o))
             rewards.append(r)
             truncated.append(done)

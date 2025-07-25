@@ -81,13 +81,15 @@ def main():
     bal_fit = get_fit_func(2, cpu, mem)    # Balance Fit agent
     random_fit = get_fit_func(3, cpu, mem)
     m2f_fit = get_fit_func(4, cpu, mem)
+    
+
     runEvaluate(env, first_fit, run_episode)
-    runEvaluate(env, best_fit, run_episode)
-    runEvaluate(env, random_fit, run_episode)
+    # runEvaluate(env, best_fit, run_episode)
+    # runEvaluate(env, random_fit, run_episode)
     # run_episode_m2f(env, m2f_fit, 0, N_vm)
     # run_episode_bal(env, bal_fit, 0, N_vm, "max")
-    runEvaluate(env, m2f_fit, run_episode_m2f)
-    runEvaluate(env, bal_fit, run_episode_bal)
+    # runEvaluate(env, m2f_fit, run_episode_m2f)
+    # runEvaluate(env, bal_fit, run_episode_bal)
 
     # Run multiple episodes
     # res_b = []  # Results for Balance Fit
