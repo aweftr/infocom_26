@@ -3,12 +3,9 @@
 import os
 import random
 import time
-import copy
 from dataclasses import dataclass
-from multiprocessing import Pool
 
 
-import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
@@ -17,7 +14,7 @@ from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.utils.rnn import pad_sequence
 
-from schedgym.sched_env_minusage import SchedEnv 
+from schedgym.sched_env_minusage import SchedEnv, getData
 from ppo_agent import *
 from baseline_agent import get_fit_func
 from common import linear_decay, trimmed_mean, EarlyStopping
@@ -34,9 +31,9 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    validate_interval: int = 20
+    validate_interval: int = 25
     """Validate the agent per interval to avoid overfitting by early stopping"""
-    valide_patience: int = 20
+    valide_patience: int = 10
     """Early stop patience"""
     concurrent_processes: int = 8
     """number of concurrent processes to valide the agent"""
@@ -60,9 +57,9 @@ class Args:
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the learning rate of the optimizer"""
-    num_envs: int = 4
+    num_envs: int = 8
     """the number of parallel game environments"""
-    num_steps: int = 128
+    num_steps: int = 256
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
@@ -97,20 +94,6 @@ class Args:
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
 
-
-def run_episode(env: SchedEnv, agent, index, N_vm, device="cpu"):
-    # 2. Testing
-    state = env.reset(index, N_vm=N_vm)
-    done = False
-    while not done:
-        with torch.no_grad():
-            state_flatten = torch.Tensor(flatten_observation(state)).to(device)
-            avail = torch.tensor(state["avail"], dtype=torch.bool).to(device)
-            # breakpoint()
-            action = agent.get_action_inference(state_flatten, avail=avail)
-            state, _, done = env.step(action)
-
-    return env.get_attr('total_wait_time')
 
 def val(valid_envs: MyVectorEnvWithIndex, agent: Agent):
     obs, avail = valid_envs.reset(valid_inds)
@@ -155,11 +138,12 @@ device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cp
 
 # env = SchedEnv(args.PM_number, args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr)
 
+data = getData(args.data_path, args.double_thr)
 def make_env():
-    return SchedEnv(args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr, random_reset=True)
+    return SchedEnv(args.PM_cpu_oneNUME, args.PM_mem_oneNUME, data, args.double_thr, random_reset=True)
 
 def make_valid_env():
-    return SchedEnv(args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr)
+    return SchedEnv(args.PM_cpu_oneNUME, args.PM_mem_oneNUME, data, args.double_thr)
 # %%
 envs = MyVectorEnv(make_env, args.num_envs, N_vm=args.N_vm)
 
@@ -175,7 +159,7 @@ valid_envs = MyVectorEnvWithIndex(make_valid_env, valid_num, N_vm=args.N_vm)
 
 
 agent = TransformerPPOAgent(3, 2).to(device)
-agent.load_state_dict(torch.load(os.path.join("runs", "ppo_BCpretrain__1__1753418132", "model.pth")))
+agent.load_state_dict(torch.load(os.path.join("runs", "ppo_BCpretrain__1__1753443805", "model.pth")))
 
 optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
@@ -388,4 +372,4 @@ for iteration in range(1, args.num_iterations + 1):
 
 envs.close()
 writer.close()
-# torch.save(agent.state_dict(), f"runs/{run_name}/model.pth")
+torch.save(agent.state_dict(), f"runs/{run_name}/model.pth")

@@ -233,7 +233,13 @@ class MyVectorEnvWithIndex:
 
     def step(self, actions):
         obs, rewards, truncated, avails, infos = [], [], [], [], []
+        i = 0
         for env, action in zip(self.envs, actions):
+            # print(i)
+            # if i == 85:
+            #     print(env.cluster, action)
+                # breakpoint()
+            i += 1
             info = {}
             o, r, done = env.step(action) 
             if done:

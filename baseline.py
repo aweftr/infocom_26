@@ -2,13 +2,14 @@
 
 import numpy as np
 # from schedgym.sched_env import SchedEnv 
-from schedgym.sched_env_minusage import SchedEnv
+from schedgym.sched_env_minusage import SchedEnv, getData
 from baseline_agent import get_fit_func
 from tqdm import trange
 from multiprocessing import Pool
 import copy
 from common import trimmed_mean
 DATA_PATH = "data/Huawei-East-1-lt.csv"
+data = getData(DATA_PATH, 10)
 
 # A. Validation Result
 # valid_inds = np.load('data/valid_random_time_150.npy')
@@ -18,6 +19,7 @@ DATA_PATH = "data/Huawei-East-1-lt.csv"
 valid_inds = np.load('data/test_random_time_1000.npy')
 num_episodes = 1000
 N_vm = 1000
+num_processes = 12
 
 first_fit = get_fit_func(0, 40, 90)
 def run_episode(env: SchedEnv, agent, index, N_vm):
@@ -58,7 +60,7 @@ def run_episode_bal(env: SchedEnv, agent, index, N_vm):
 
 def runEvaluate(env, agent, run_episode):
     args = [(env, agent, valid_inds[episode], N_vm) for episode in range(num_episodes)]
-    with Pool(processes=8) as pool:
+    with Pool(processes=num_processes) as pool:
         result = pool.starmap(run_episode, args)
         
     result = np.array(result)
@@ -74,7 +76,7 @@ def main():
     cpu = 40  # Total CPU per NUMA
     mem = 90  # Total memory per NUMA
 
-    env = SchedEnv(cpu, mem, DATA_PATH, 10)
+    env = SchedEnv(cpu, mem, data, 10)
     first_fit = get_fit_func(0, cpu, mem)  # First Fit agent
     best_fit = get_fit_func(1, cpu, mem)
     # run_episode(env, best_fit, 0, N_vm)

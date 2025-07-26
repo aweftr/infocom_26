@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import gymnasium as gym
 from queue import PriorityQueue
+from copy import deepcopy
 
 
 def getData(path, double_thr=1e10):
@@ -138,7 +139,7 @@ class Cluster:
         self.current_pm_index += 1
 
     def handle(self, action, request):
-        req = request
+        req = deepcopy(request)
         if action > len(self.active_pms) * 2:
             raise Exception("Invalid action to unknown PM!")
         if action == 0:
@@ -210,7 +211,7 @@ class SchedEnv(gym.Env):
         self,
         cpu,
         mem,
-        datapath,
+        data,
         double_thr=10,
         reward_type="basic",
         reward_weight=0,
@@ -220,7 +221,7 @@ class SchedEnv(gym.Env):
         self.cpu = cpu
         self.mem = mem
         self.cluster = Cluster(cpu, mem)
-        self.data = getData(datapath, double_thr)
+        self.data = data
         self.reward_type = reward_type
         self.reward_weight = reward_weight
         self.total_pm_usage = 0
@@ -242,7 +243,6 @@ class SchedEnv(gym.Env):
         self.init_index = index
         self.index = index
         self.N_vm = N_vm
-        # breakpoint()
 
         self.t = self.data[self.index]["at"]  # Current time
         self.cnt = 0  # Number of created VMs

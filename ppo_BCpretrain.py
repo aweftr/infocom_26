@@ -1,7 +1,7 @@
-''' Evaluate the results of First Fit and Balance Fit '''
+''' PPO BC pretrain '''
 
 import numpy as np
-from schedgym.sched_env_minusage import SchedEnv 
+from schedgym.sched_env_minusage import SchedEnv, getData
 from baseline_agent import get_fit_func
 from tqdm import trange
 from common import trimmed_mean, EarlyStopping
@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass
 import itertools
 DATA_PATH = "data/Huawei-East-1-lt.csv"
+data = getData(DATA_PATH, 10)
 
 use_gpu = True
 device = torch.device("cuda" if torch.cuda.is_available() and use_gpu else "cpu")
@@ -47,7 +48,7 @@ class Args:
     N_vm: int = 1000
     """The VM sequecne length"""
 
-    total_timesteps: int = 250000
+    total_timesteps: int = 500000
     """total timesteps of the experiments"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
@@ -70,7 +71,7 @@ class Args:
 
 
 def make_env():
-    return SchedEnv(args.PM_cpu_oneNUME, args.PM_mem_oneNUME, args.data_path, args.double_thr, random_reset=True)
+    return SchedEnv(args.PM_cpu_oneNUME, args.PM_mem_oneNUME, data, args.double_thr, random_reset=True)
 
 # Environment parameters
 args = Args()

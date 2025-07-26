@@ -2,15 +2,16 @@
 
 import numpy as np
 # from schedgym.sched_env import SchedEnv 
-from schedgym.sched_env_minusage import SchedEnv
+from schedgym.sched_env_minusage import SchedEnv, getData
 from baseline_agent import get_fit_func
 from tqdm import trange
 from multiprocessing import Pool
 import copy
 from common import trimmed_mean
-# DATA_PATH = "data/Huawei-East-1-lt.csv"
+DATA_PATH = "data/Huawei-East-1-lt.csv"
 # DATA_PATH = "data/Huawei-East-1-ltlogNormalNoise.csv"
-DATA_PATH = "data/Huawei-East-1-ltGaussianNoise.csv"
+# DATA_PATH = "data/Huawei-East-1-ltGaussianNoise.csv"
+data = getData(DATA_PATH, 10)
 
 # A. Validation Result
 # valid_inds = np.load('data/valid_random_time_150.npy')
@@ -19,8 +20,9 @@ DATA_PATH = "data/Huawei-East-1-ltGaussianNoise.csv"
 # B. Test Result
 valid_inds = np.load('data/test_random_time_1000.npy')
 num_episodes = 1000
-N_vm = 1000
+N_vm = 5000
 lt_thre = 8000
+num_processes = 14
 
 def run_episode(env: SchedEnv, agent, index, N_vm):
     # env = copy.deepcopy(env)
@@ -78,7 +80,7 @@ def run_episode_bal(env: SchedEnv, agent, index, N_vm):
 
 def runEvaluateOnline(env, agent, run_episode, lt_thre):
     args = [(env, agent, valid_inds[episode], N_vm, lt_thre) for episode in range(num_episodes)]
-    with Pool(processes=8) as pool:
+    with Pool(processes=num_processes) as pool:
         result = pool.starmap(run_episode, args)
         
     result = np.array(result)
@@ -106,7 +108,7 @@ def main():
     cpu = 40  # Total CPU per NUMA
     mem = 90  # Total memory per NUMA
 
-    env = SchedEnv(cpu, mem, DATA_PATH, 10)
+    env = SchedEnv(cpu, mem, data, 10)
     first_fit = get_fit_func(0, cpu, mem)  # First Fit agent
     best_fit = get_fit_func(1, cpu, mem)
     # run_episode(env, first_fit, 0, N_vm)
@@ -119,7 +121,7 @@ def main():
     # print(env.total_pm_usage)
     # run_episode_online(env, predNoise_ltfit, 0, N_vm, lt_thre)
 
-    # runEvaluate(env, first_fit, run_episode)
+    runEvaluate(env, first_fit, run_episode)
     # runEvaluate(env, best_fit, run_episode)
     # runEvaluate(env, random_fit, run_episode)
     # runEvaluate(env, m2f_fit, run_episode_m2f)
@@ -190,6 +192,26 @@ def main():
     clairvoyant_ltfit 8000 pm usage trimmed mean: 94251.50875
     clairvoyant_ltfit 8000 pm usage mean: 105909.299
     clairvoyant_ltfit 8000 max pm mean: 8.897
+
+    5000 VMs
+    first_fit pm usage trimmed mean: 989993.88
+    first_fit pm usage mean: 1126954.703
+    first_fit max pm mean: 17.852
+    best_fit pm usage trimmed mean: 1080088.4125
+    best_fit pm usage mean: 1244430.842
+    best_fit max pm mean: 17.899
+    random_fit pm usage trimmed mean: 1195346.59
+    random_fit pm usage mean: 1385110.395
+    random_fit max pm mean: 18.943
+    movetofront_fit pm usage trimmed mean: 1225053.76875
+    movetofront_fit pm usage mean: 1426435.648
+    movetofront_fit max pm mean: 19.466
+    balance_fit pm usage trimmed mean: 1062319.9525
+    balance_fit pm usage mean: 1196076.123
+    balance_fit max pm mean: 17.931
+    clairvoyant_ltfit 8000 pm usage trimmed mean: 977757.35625
+    clairvoyant_ltfit 8000 pm usage mean: 1122609.799
+    clairvoyant_ltfit 8000 max pm mean: 19.458
 
     10000 VMs
     first_fit pm usage trimmed mean: 2362719.755

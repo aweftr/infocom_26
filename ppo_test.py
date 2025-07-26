@@ -1,7 +1,7 @@
 ''' Evaluate the results of First Fit and Balance Fit '''
 
 import numpy as np
-from schedgym.sched_env_minusage import SchedEnv 
+from schedgym.sched_env_minusage import SchedEnv, getData
 from baseline_agent import get_fit_func
 from tqdm import trange
 from common import trimmed_mean
@@ -10,7 +10,9 @@ import os
 import torch
 from torch.nn.utils.rnn import pad_sequence
 import math
+from copy import deepcopy
 DATA_PATH = "data/Huawei-East-1-lt.csv"
+data = getData(DATA_PATH, 10)
 
 # A. Validation Result
 # valid_inds = np.load('data/valid_random_time_150.npy')
@@ -18,14 +20,14 @@ DATA_PATH = "data/Huawei-East-1-lt.csv"
 # B. Test Result
 valid_inds = np.load('data/test_random_time_1000.npy')
 num_episodes = 1000
-batch_size = 256
+batch_size = 1000
 N_vm = 1000
 use_gpu = True
 device = torch.device("cuda" if torch.cuda.is_available() and use_gpu else "cpu")
 
 
 def make_env():
-    return SchedEnv(cpu, mem, DATA_PATH, 10)
+    return SchedEnv(cpu, mem, data, 10)
 
 def getFeaturesMasks(obs: np.array, avails):
     vm_features = torch.Tensor(np.array(obs[:, 0].tolist(), dtype=float)).to(device)
@@ -54,7 +56,12 @@ mem = 90  # Total memory per NUMA
 agent = TransformerPPOAgent(3, 2)
 # path = os.listdir("runs")[-3]
 # path = "ppo_train__1__1752493459" # vanilla train 9w+
-path = "ppo_BCpretrain__1__1753418132" # BC pretrain
+
+# path = "ppo_BCpretrain__1__1753443805"
+# PPO pm usage trimmed mean: 83069.1875
+# PPO pm usage mean: 94741.432
+
+path = "ppo_train__1__1753446038"
 print(path)
 agent.load_state_dict(torch.load(os.path.join("runs", path, "model.pth")))
 agent.to(device)
@@ -63,6 +70,9 @@ agent.to(device)
 num_batch = math.ceil(num_episodes / batch_size)
 
 total_pm_usage = []
+envs = MyVectorEnvWithIndex(make_env, num_episodes, N_vm)
+obs, avail = envs.reset(valid_inds)
+
 for batch in range(num_batch):
     s_index = batch_size * batch
     e_index = batch_size * (batch + 1)
@@ -71,15 +81,14 @@ for batch in range(num_batch):
         e_index = num_episodes
     
     envs = MyVectorEnvWithIndex(make_env, batch_size, N_vm)
-    obs, avail = envs.reset(valid_inds[s_index: e_index])
 
+    obs, avail = envs.reset(valid_inds[s_index: e_index])
     with torch.no_grad():
         for i in trange(N_vm):
             obs = np.array(obs, dtype=np.object_)
             avail = np.array(avail, dtype=np.object_)
 
             vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(obs, avail)
-            # breakpoint()
             actions = agent.get_action(vm_features, pm_padded, pm_mask, action_mask)
             obs, rewards, truncated, avail, infos = envs.step(actions)
 
