@@ -24,10 +24,10 @@ def f():
             lt = deletion_record['time'].values[0] - at
             
             # Add the transformed data to the new dataset
-            new_data.append([vmid, cpu, mem, at, lt])
+            new_data.append([vmid, cpu, mem, at, lt, lt])
 
     # Create a new DataFrame
-    new_df = pd.DataFrame(new_data, columns=['vmid', 'cpu', 'memory', 'at', 'lt'])
+    new_df = pd.DataFrame(new_data, columns=['vmid', 'cpu', 'memory', 'at', 'lt', 'ltpred'])
 
     # Check if VM IDs are consecutive
     expected_vmid = list(range(len(new_df)))

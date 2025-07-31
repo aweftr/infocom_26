@@ -15,9 +15,9 @@ from runx.logx import logx
 import itertools
 import random
 from schedgym.sched_env import SchedEnv
-from dqn.agent import DoubleDQNAgent
-from dqn.learner import QLearner
-from dqn.replay_memory import ReplayMemory
+from spane_dqn.agent import DoubleDQNAgent
+from spane_dqn.learner import QLearner
+from spane_dqn.replay_memory import ReplayMemory
 from baseline_agent import get_fit_func
 from common import linear_decay, trimmed_mean
 

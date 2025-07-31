@@ -13,7 +13,7 @@ from tqdm import trange
 import glob
 from types import SimpleNamespace
 from schedgym.sched_env import SchedEnv
-from dqn.agent import DoubleDQNAgent
+from spane_dqn.agent import DoubleDQNAgent
 from baseline_agent import get_fit_func
 from common import trimmed_mean
 

@@ -49,7 +49,7 @@ class PM:
                 raise ValueError("Insufficient resources for allocation")
             self.resources[numa] = new_resources
         # Store VM information
-        self.stored_vms[request["vmid"]] = (self.id, numa, request["is_double"], request["at"], request["lt"], request["ltpred"])
+        self.stored_vms[request["vmid"]] = (self.id, numa, request["is_double"], request["at"], request["lt"])
         self.recent_usage_time = request["at"]
 
     def is_empty(self):
@@ -96,30 +96,6 @@ class PM:
     def __repr__(self):
         return f"PM id:{self.id}, resources:{self.resources.reshape(-1)}, VMs:{self.stored_vms}"
 
-
-# # test
-# a = PM(0, 40, 90)
-# vm = {"vmid": 0, "cpu": 30, "mem": 60, "is_double": 1}
-# a.handle(1, vm)
-
-# a = PM(0, 40, 90)
-# vm = {"vmid": 0, "cpu": 30, "mem": 60, "is_double": 0}
-# a.handle(1, vm)
-# vm2 = {"vmid": 1, "cpu": 30, "mem": 60, "is_double": 0}
-# print(a.check_request(vm2))
-
-# a = PM(0, 40, 90)
-# vm = {"vmid": 0, "cpu": 30, "mem": 60, "is_double": 1}
-# a.handle(1, vm)
-# vm2 = {"vmid": 1, "cpu": 30, "mem": 60, "is_double": 0}
-# print(a.check_request(vm2))
-
-
-# a = PM(0, 40, 90)
-# vm = {"vmid": 0, "cpu": 30, "mem": 60, "is_double": 1}
-# a.handle(1, vm)
-# vm2 = {"vmid": 1, "cpu": 30, "mem": 60, "is_double": 1}
-# print(a.check_request(vm2))
 # %%
 class Cluster:
     def __init__(self, cpu, mem):
@@ -163,6 +139,8 @@ class Cluster:
                 pm.delete(req)
                 if pm.is_empty():
                     self.active_pms.remove(pm)
+                    if len(self.active_pms) == 0:
+                        self.create_pm()
                 deleted = True
         if not deleted:
             raise Exception("VM not found in current active PMs!")
@@ -177,7 +155,7 @@ class Cluster:
         pm_states = []
         for i in self.active_pms:
             pm_states.append(i.resources)
-        return np.array(pm_states).reshape(-1, 2)
+        return np.array(pm_states)
 
     def check_request(self, request):
         avail = []
@@ -312,8 +290,7 @@ class SchedEnv(gym.Env):
             "obs": self.cluster.describe(),
             "feat": np.array([request["cpu"], request["mem"], request["is_double"]]),
             "avail": self.cluster.check_request(request),
-            "lt": request["lt"],
-            "ltpred": request["ltpred"]
+            "lt": request["lt"]
         }
 
 

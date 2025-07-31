@@ -3,6 +3,40 @@
 # cluster the VM based on their lifetime into several buckets and use firstfit to allocate each bucket
 import numpy as np
 
+def updateBinarytype(pm, split, ctime):
+    if pm.pm_type is None and len(pm.stored_vms) == 0:
+        return None
+    
+    vmtypes = []
+    # 1 is long, 0 is short
+    for vm in pm.stored_vms:
+        # 5 is the stored ltpred, 3 is the arrival time
+        last_time = pm.stored_vms[vm][5] - (ctime - pm.stored_vms[vm][3])
+        vmtypes.append(1 if last_time > split else 0)
+    vmtypes = np.array(vmtypes)
+    if np.any(vmtypes):
+        pm.pm_type = 1
+        return 1
+    else:
+        pm.pm_type = 0
+        return 0
+
+def updateMultitype(pm, ctime):
+    if pm.pm_type is None and len(pm.stored_vms) == 0:
+        return None
+    
+    vmtypes = []
+    # 0 - 11
+    for vm in pm.stored_vms:
+        # 5 is the stored ltpred, 3 is the arrival time
+        last_time = pm.stored_vms[vm][5] - (ctime - pm.stored_vms[vm][3])
+        vmtype = np.floor(np.log2(last_time / 15)).astype(int)
+        if vmtype > 11: vmtype = 11
+        vmtypes.append(vmtype)
+    vmtypes = np.array(vmtypes)
+    pm.pm_type = np.max(vmtypes)
+    return np.max(vmtypes)
+    
 def clairvoyant_ltfit_binary(state, env, lt_thre):
     obs = state["obs"].copy()
     feat = state["feat"].copy()
@@ -20,6 +54,7 @@ def clairvoyant_ltfit_binary(state, env, lt_thre):
 
     for idx, pm in enumerate(env.cluster.active_pms):
         # split the pm by their type
+        updateBinarytype(pm, lt_thre, env.t)
         # pm.updatetype(lt_thre, env.t)
         if np.any(numa_avail[[idx*2, idx*2+1]]):
             if pm.pm_type is None:
@@ -69,6 +104,7 @@ def clairvoyant_ltfit_multi(state, env, lt_thre):
     for idx, pm in enumerate(env.cluster.active_pms):
         # split the pm by their type
         # pm.updatetype(lt_thre, env.t)
+        updateMultitype(pm, env.t)
         if np.any(numa_avail[[idx*2, idx*2+1]]):
             if pm.pm_type is None:
                 # if there is one new available pm

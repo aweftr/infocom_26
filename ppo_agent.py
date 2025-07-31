@@ -15,6 +15,17 @@ def flatten_observation(observation):
     return [observation["feat"], observation["obs"].reshape(-1)]
     # return np.concatenate((observation["obs"].reshape(-1), observation["feat"]))
 
+def flatten_observation_lt(observation, lt_thre, pm_type):
+    # return [VMfeatues, PMfeatures]
+    vm_type = 1 if observation["ltpred"] > lt_thre else 0
+    pm_type = np.array(pm_type).reshape(-1, 1)
+    feat = np.append(observation["feat"], vm_type)
+    obs = np.concatenate((observation["obs"], pm_type), axis=1)
+    # breakpoint()
+    return [feat, obs.reshape(-1)]
+    # return np.concatenate((observation["obs"].reshape(-1), observation["feat"]))
+
+
 class Agent(nn.Module):
     def __init__(self, env):
         super().__init__()
@@ -245,6 +256,7 @@ class MyVectorEnvWithIndex:
             if done:
                 info["done_info"] = o
                 info["total_pm_usage"] = env.total_pm_usage
+                info["maximum_pm_num"] = env.maximum_pm_num
             obs.append(flatten_observation(o))
             rewards.append(r)
             truncated.append(done)
@@ -272,6 +284,154 @@ class MyVectorEnvWithIndex:
         for env in self.envs:
             env.close()
 
+def updateBinarytype(pm, split, ctime):
+    if pm.pm_type is None:
+        return 2
+    
+    vmtypes = []
+    # 1 is long, 0 is short
+    for vm in pm.stored_vms:
+        # 5 is the stored ltpred, 3 is the arrival time
+        last_time = pm.stored_vms[vm][5] - (ctime - pm.stored_vms[vm][3])
+        vmtypes.append(1 if last_time > split else 0)
+    vmtypes = np.array(vmtypes)
+    if np.any(vmtypes):
+        pm.pm_type = 1
+        return 1
+    else:
+        pm.pm_type = 0
+        return 0
+    
+class MyVectorEnvLt:
+    def __init__(self, make_env: Callable, num_envs, N_vm, lt_thre):
+        self.num_envs = num_envs
+        self.envs = [make_env() for _ in range(num_envs)]
+        self.N_vm = N_vm
+        self.lt_thre = lt_thre
+        
+
+    def reset(self, seed=None, options=None):
+        obs = []
+        avail = []
+        rseed = seed
+        for i, env in enumerate(self.envs):
+            observation = env.reset(N_vm=self.N_vm, seed=rseed, options=options)
+            pm_type = [2] * 2 * len(env.cluster.active_pms)
+            obs.append(flatten_observation_lt(observation, self.lt_thre, pm_type))
+            avail.append(observation["avail"])
+            rseed += 1
+        return obs, avail
+
+    def step(self, actions):
+        obs, rewards, truncated, avails, infos = [], [], [], [], []
+        for env, action in zip(self.envs, actions):
+            info = {}
+            o, r, done = env.step(action) 
+            
+            if done:
+                info["done_info"] = o
+                info["total_pm_usage"] = env.total_pm_usage
+                o = env.reset(N_vm=self.N_vm)
+            pm_type = []
+            breakpoint()
+            for pm in env.cluster.active_pms:
+                # breakpoint()
+                pt = updateBinarytype(pm, self.lt_thre, env.t)
+                if pt is None:
+                    raise Exception("PM type is None!")
+                pm_type.extend([pt] * 2)
+
+            obs.append(flatten_observation_lt(o, self.lt_thre, pm_type))
+            rewards.append(r)
+            truncated.append(done)
+            avails.append(o["avail"])
+            infos.append(info)
+        return (
+            obs,
+            np.array(rewards),
+            np.array(truncated),
+            avails,
+            infos
+        )
+    
+    def sample_action(self, avails):
+        sampled_action = []
+        for i, row in enumerate(avails):
+            row_true_indices = np.where(row)[0]
+            if len(row_true_indices) > 0:
+                sample = np.random.choice(row_true_indices)
+                sampled_action.append(sample)
+        sampled_action = np.array(sampled_action)
+        return sampled_action
+    
+    def close(self):
+        for env in self.envs:
+            env.close()
+
+class MyVectorEnvWithIndexLt:
+    def __init__(self, make_env: Callable, num_envs, N_vm, lt_thre):
+        self.num_envs = num_envs
+        self.envs = [make_env() for _ in range(num_envs)]
+        self.N_vm = N_vm
+        self.lt_thre = lt_thre
+        
+
+    def reset(self, indices, seed=None, options=None):
+        obs = []
+        avail = []
+        for i, env in enumerate(self.envs):
+            observation = env.reset(N_vm=self.N_vm, index=indices[i])
+            pm_type = [2] * 2 * len(env.cluster.active_pms)
+            obs.append(flatten_observation_lt(observation, self.lt_thre, pm_type))
+            avail.append(observation["avail"])
+        return obs, avail
+
+    def step(self, actions):
+        obs, rewards, truncated, avails, infos = [], [], [], [], []
+        for env, action in zip(self.envs, actions):
+            # print(i)
+            # if i == 85:
+            #     print(env.cluster, action)
+                # breakpoint()
+
+            info = {}
+            o, r, done = env.step(action) 
+            if done:
+                info["done_info"] = o
+                info["total_pm_usage"] = env.total_pm_usage
+                info["maximum_pm_num"] = env.maximum_pm_num
+            pm_type = []
+            for pm in env.cluster.active_pms:
+                pt = updateBinarytype(pm, self.lt_thre, env.t)
+                if pt is None:
+                    raise Exception("PM type is None!")
+                pm_type.extend([pt] * 2)
+            obs.append(flatten_observation_lt(o, self.lt_thre, pm_type))
+            rewards.append(r)
+            truncated.append(done)
+            avails.append(o["avail"])
+            infos.append(info)
+        return (
+            obs,
+            np.array(rewards),
+            np.array(truncated),
+            avails,
+            infos
+        )
+    
+    def sample_action(self, avails):
+        sampled_action = []
+        for i, row in enumerate(avails):
+            row_true_indices = np.where(row)[0]
+            if len(row_true_indices) > 0:
+                sample = np.random.choice(row_true_indices)
+                sampled_action.append(sample)
+        sampled_action = np.array(sampled_action)
+        return sampled_action
+    
+    def close(self):
+        for env in self.envs:
+            env.close()
 # from schedgym.sched_env_minusage import SchedEnv
 # def make_env():
 #     return SchedEnv(40, 90, "data/Huawei-East-1-lt.csv", 10, random_reset=True)
