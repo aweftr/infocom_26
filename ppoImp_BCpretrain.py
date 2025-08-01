@@ -2,7 +2,7 @@
 
 import numpy as np
 from schedgym.sched_env_minusage import SchedEnv, getData
-from baseline_agent import get_fit_func, clairvoyant_ltfit_updatePM
+from baseline_agent import get_fit_func, clairvoyant_ltfit_updatePM, first_fit
 from tqdm import trange
 from common import trimmed_mean, EarlyStopping
 from ppo_agent import *
@@ -31,7 +31,7 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    validate_interval: int = 20
+    validate_interval: int = 5
     """Validate the agent per interval to avoid overfitting by early stopping"""
     valide_patience: int = 10
     """Early stop patience"""
@@ -50,11 +50,11 @@ class Args:
     N_vm: int = 1000
     """The VM sequecne length"""
 
-    total_timesteps: int = 500000
+    total_timesteps: int = 100000
     """total timesteps of the experiments"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-3
     """the learning rate of the optimizer"""
     num_envs: int = 4
     """the number of parallel game environments"""
@@ -129,6 +129,14 @@ def getBCActions(envs):
         actions.append(action)
     return np.array(actions)
 
+def getFFActions(envs):
+    actions = []
+    for i, env in enumerate(envs.envs):
+        state = env.get_input()
+        action = first_fit(state)
+        actions.append(action)
+    return np.array(actions)
+
 def getFeaturesMasks(obs: np.array, avails, pm_feature_num):
     vm_features = torch.Tensor(np.array(obs[:, 0].tolist(), dtype=float)).to(device)
     # vm_features = torch.Tensor(b_obs[mb_inds][:, 0]).to(device)
@@ -180,6 +188,7 @@ for iteration in range(args.num_iterations):
     b_obs = np.array(obs, dtype=np.object_).reshape(-1, 2)
     b_actions = actions.reshape(-1)
     b_avails = np.array(avails, dtype=np.object_).reshape(-1)
+    # breakpoint()
 
     # Optimizing the policy and value network
     b_inds = np.arange(args.batch_size)

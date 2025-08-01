@@ -285,7 +285,8 @@ class MyVectorEnvWithIndex:
             env.close()
 
 def updateBinarytype(pm, split, ctime):
-    if pm.pm_type is None:
+    if pm.pm_type is None and len(pm.stored_vms) == 0:
+        pm.pm_type = 2
         return 2
     
     vmtypes = []
@@ -331,9 +332,15 @@ class MyVectorEnvLt:
             if done:
                 info["done_info"] = o
                 info["total_pm_usage"] = env.total_pm_usage
+                pm_type = []
+                for pm in env.cluster.active_pms:
+                    pt = updateBinarytype(pm, self.lt_thre, env.t)
+                    if pt is None:
+                        raise Exception("PM type is None!")
+                    pm_type.extend([pt] * 2)
+                info["pm_type"] = pm_type
                 o = env.reset(N_vm=self.N_vm)
             pm_type = []
-            breakpoint()
             for pm in env.cluster.active_pms:
                 # breakpoint()
                 pt = updateBinarytype(pm, self.lt_thre, env.t)

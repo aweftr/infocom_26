@@ -8,6 +8,7 @@ from common import trimmed_mean
 from ppo_agent import *
 import os
 import torch
+import random
 from torch.nn.utils.rnn import pad_sequence
 import math
 from copy import deepcopy
@@ -20,7 +21,6 @@ data = getData(DATA_PATH, 10)
 # B. Test Result
 valid_inds = np.load('data/test_random_time_1000.npy')
 num_episodes = 1000
-batch_size = 1000
 N_vm = 5000
 lt_thre = 8000
 use_gpu = True
@@ -53,6 +53,12 @@ def getFeaturesMasks(obs: np.array, avails, pm_feature_num):
 cpu = 40  # Total CPU per NUMA
 mem = 90  # Total memory per NUMA
 
+seed = 2
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+torch.backends.cudnn.deterministic = True
+
 
 agent = TransformerPPOAgent(4, 3)
 # path = os.listdir("runs")[-3]
@@ -62,41 +68,36 @@ agent = TransformerPPOAgent(4, 3)
 # PPO pm usage trimmed mean: 83069.1875
 # PPO pm usage mean: 94741.432
 
-path = "ppoImp_BCpretrain__1__1753959848"
+# path = "ppoImp_train__1__1753988316"
+# path = "ppoImp_train__1__1753989682"
+# path = "ppoImp_train__1__1753990510"
+path = "ppoImp_train__1__1754016673"
 print(path)
 agent.load_state_dict(torch.load(os.path.join("runs", path, "model.pth")))
 agent.to(device)
 
 
-num_batch = math.ceil(num_episodes / batch_size)
 
 total_pm_usage = []
 max_pm_num = []
-# envs = MyVectorEnvWithIndexLt(make_env, num_episodes, N_vm, lt_thre)
-# obs, avail = envs.reset(valid_inds)
 
-for batch in range(num_batch):
-    s_index = batch_size * batch
-    e_index = batch_size * (batch + 1)
-    print(s_index, e_index)
-    if e_index > num_episodes:
-        e_index = num_episodes
-    
-    envs = MyVectorEnvWithIndexLt(make_env, num_episodes, N_vm, lt_thre)
 
-    obs, avail = envs.reset(valid_inds[s_index: e_index])
-    with torch.no_grad():
-        for i in trange(N_vm):
-            obs = np.array(obs, dtype=np.object_)
-            avail = np.array(avail, dtype=np.object_)
+envs = MyVectorEnvWithIndexLt(make_env, num_episodes, N_vm, lt_thre)
+obs, avail = envs.reset(valid_inds)
 
-            vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(obs, avail, 3)
-            actions = agent.get_action(vm_features, pm_padded, pm_mask, action_mask)
-            obs, rewards, truncated, avail, infos = envs.step(actions)
 
-    for i in range(e_index - s_index):
-        total_pm_usage.append(infos[i]["total_pm_usage"])
-        max_pm_num.append(infos[i]["maximum_pm_num"])
+with torch.no_grad():
+    for i in trange(N_vm):
+        obs = np.array(obs, dtype=np.object_)
+        avail = np.array(avail, dtype=np.object_)
+
+        vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(obs, avail, 3)
+        actions = agent.get_action(vm_features, pm_padded, pm_mask, action_mask)
+        obs, rewards, truncated, avail, infos = envs.step(actions)
+
+for i in range(num_episodes):
+    total_pm_usage.append(infos[i]["total_pm_usage"])
+    max_pm_num.append(infos[i]["maximum_pm_num"])
 
 
 # breakpoint()
@@ -104,7 +105,7 @@ for batch in range(num_batch):
 # for idx, env in enumerate(envs.envs):
 #     print(f"Init index of env {idx}: {env.init_index}")
 
-
+# print(total_pm_usage)
 print(f"PPO pm usage trimmed mean: {trimmed_mean(total_pm_usage)}")
 print(f"PPO pm usage mean: {np.mean(total_pm_usage)}")
 print(f"PPO max pm mean: {np.mean(max_pm_num)}")

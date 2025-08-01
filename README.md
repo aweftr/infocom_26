@@ -8,4 +8,7 @@ The VM dataset used in this paper is the [Huawei-East-1](https://github.com/huaw
 - Install poetry 2.0+
 - Run `poetry sync` to install python packages.(python >= 3.12, pytorch>=2.7)
 - Run `poetry env activate` to activate the install python environment. 
-- Run and play with the code!
+- Run `python onlineClairvoyant.py` to test all heuristic algorithms. 
+- Run `python ppoImp_BCpretrain.py` to BC pretrain the PADMA-RL. 
+- Run `python ppoImp_train.py` to train the PADMA-RL. 
+- Run `python ppoImp_test.py` to test the PADMA-RL.

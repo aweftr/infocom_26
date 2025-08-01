@@ -19,7 +19,7 @@ from ppo_agent import *
 from baseline_agent import get_fit_func
 from common import linear_decay, trimmed_mean, EarlyStopping
 valid_inds = np.load('data/valid_random_time_150.npy')
-valid_num = 150
+valid_num = 50
 
 @dataclass
 class Args:
@@ -31,15 +31,13 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    validate_interval: int = 25
+    validate_interval: int = 5
     """Validate the agent per interval to avoid overfitting by early stopping"""
-    valide_patience: int = 10
+    valide_patience: int = 20
     """Early stop patience"""
-    concurrent_processes: int = 8
-    """number of concurrent processes to valide the agent"""
 
     # Environment specific arguments
-    MAX_PM_NUM: int = 200
+    MAX_PM_NUM: int = 100
     """Maximum number of PMs, avoid too long input tensor"""
     PM_cpu_oneNUME: int = 40
     """The cpu capacity of PM in one NUMA"""
@@ -51,13 +49,13 @@ class Args:
     """Lifetime threshold to determine long or short class"""
     data_path: str = "data/Huawei-East-1-lt.csv"
     """The input data path"""
-    N_vm: int = 1000
+    N_vm: int = 5000
     """The VM sequecne length"""
 
     # Algorithm specific arguments
-    total_timesteps: int = 50000000
+    total_timesteps: int = 500000
     """total timesteps of the experiments"""
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-3
     """the learning rate of the optimizer"""
     num_envs: int = 8
     """the number of parallel game environments"""
@@ -98,17 +96,23 @@ class Args:
 
 
 def val(valid_envs: MyVectorEnvWithIndex, agent: Agent):
-    obs, avail = valid_envs.reset(valid_inds)
+    obs, avail = valid_envs.reset(valid_inds[:valid_num])
     
     total_pm_usage = []
     infos = None
     with torch.no_grad():
-        for i in range(args.N_vm):
+        for i in range(100):
             obs = np.array(obs, dtype=np.object_)
             avail = np.array(avail, dtype=np.object_)
 
             vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(obs, avail, pm_feature_num)
+            # if pm_mask.shape[1] == 201:
+            #     breakpoint()
+            # print(pm_mask.shape)
             actions = agent.get_action(vm_features, pm_padded, pm_mask, action_mask)
+            for idx, act in enumerate(actions.cpu().numpy()):
+                if (avail[idx].shape[0] - 1) // 2 >= args.MAX_PM_NUM:
+                    actions[idx] = np.random.choice(np.where(avail[idx])[0][1:])
             obs, rewards, truncated, avail, infos = valid_envs.step(actions)
 
     for i in range(valid_num):
@@ -150,7 +154,7 @@ def make_valid_env():
 
 envs = MyVectorEnvLt(make_env, args.num_envs, N_vm=args.N_vm, lt_thre=args.lt_thre)
 
-valid_envs = MyVectorEnvWithIndexLt(make_valid_env, valid_num, N_vm=args.N_vm, lt_thre=args.lt_thre)
+valid_envs = MyVectorEnvWithIndexLt(make_valid_env, valid_num, N_vm=100, lt_thre=args.lt_thre)
 # obs, avails = envs.reset()
 # while True:
 #     actions = envs.sample_action(avails)
@@ -165,11 +169,12 @@ vm_feature_num = 4
 pm_feature_num = 3
 # PM: cpu, mem, class{0, 1}
 agent = TransformerPPOAgent(vm_feature_num, pm_feature_num).to(device)
-agent.load_state_dict(torch.load(os.path.join("runs", "ppoImp_BCpretrain__1__1753959848", "model.pth")))
+agent.load_state_dict(torch.load(os.path.join("runs", "ppoImp_BCpretrain__1__1754016294", "model.pth"))) # Clair
 
+# agent.load_state_dict(torch.load(os.path.join("runs", "ppoImp_BCpretrain__1__1753989075", "model.pth"))) # FF
 optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
-es = EarlyStopping(patience=args.valide_patience, path=f"runs/{run_name}/model.pth", delta=-500)
+es = EarlyStopping(patience=args.valide_patience, path=f"runs/{run_name}/model.pth", delta=-1)
 # %%
 
 # ALGO Logic: Storage setup
@@ -236,7 +241,7 @@ for iteration in range(1, args.num_iterations + 1):
             action, logprob, _, value = agent.get_action_and_value(vm_features, pm_padded, pm_mask, action_mask)
             values[step] = value.flatten()
         for idx, act in enumerate(action.cpu().numpy()):
-            if act > args.MAX_PM_NUM:
+            if (tavails[idx].shape[0] - 1) // 2 >= args.MAX_PM_NUM:
                 action[idx] = np.random.choice(np.where(next_avail[idx])[0][1:])
         actions[step] = action
         logprobs[step] = logprob
@@ -255,7 +260,6 @@ for iteration in range(1, args.num_iterations + 1):
                     done_values[step] = torch.zeros(args.num_envs).to(device)
                 tobs = np.array(flatten_observation_lt(info["done_info"], args.lt_thre, info["pm_type"]), dtype=np.object_).reshape(1, 2)
                 tavail = info["done_info"]["avail"].reshape(1, -1)
-                breakpoint()
                 vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(tobs, tavail, pm_feature_num)
                 with torch.no_grad():
                     done_values[step][idx] = agent.get_value(vm_features, pm_padded, pm_mask)
@@ -307,7 +311,6 @@ for iteration in range(1, args.num_iterations + 1):
 
             vm_features, pm_padded, pm_mask, action_mask = getFeaturesMasks(b_obs[mb_inds], b_avails[mb_inds], pm_feature_num)
             _, newlogprob, entropy, newvalue = agent.get_action_and_value(vm_features, pm_padded, pm_mask, action_mask=action_mask, action=b_actions.long()[mb_inds])
-            # breakpoint()
             logratio = newlogprob - b_logprobs[mb_inds]
             ratio = logratio.exp()
 
@@ -367,17 +370,17 @@ for iteration in range(1, args.num_iterations + 1):
     writer.add_scalar("losses/explained_variance", explained_var, global_step)
     print("SPS:", int(global_step / (time.time() - start_time)))
     writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-    # if (iteration + 1) % args.validate_interval == 0:
-    #     val_loss = val(valid_envs, agent)
-    #     # breakpoint()
-    #     writer.add_scalar("val Loss", val_loss, global_step)
-    #     es(val_loss, agent)
-    #     if es.early_stop:
-    #         print("Early stop! Val loss: {}".format(es.val_loss_min))
-    #         break
-    #     else:
-    #         print("\tVal loss: {}".format(val_loss))
+    if (iteration + 1) % args.validate_interval == 0:
+        val_loss = val(valid_envs, agent)
+        # breakpoint()
+        writer.add_scalar("val Loss", val_loss, global_step)
+        es(val_loss, agent)
+        if es.early_stop:
+            print("Early stop! Val loss: {}".format(es.val_loss_min))
+            break
+        else:
+            print("\tVal loss: {}".format(val_loss))
 
 envs.close()
 writer.close()
-torch.save(agent.state_dict(), f"runs/{run_name}/model.pth")
+# torch.save(agent.state_dict(), f"runs/{run_name}/model.pth")

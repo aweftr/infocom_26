@@ -19,9 +19,9 @@ data = getData(DATA_PATH, 10)
 # valid_Nvms = np.load("data/valid_random_Nvm.npy")
 # num_episodes = 150
 # B. Test Result
-valid_inds = np.load('data/test_random_time_1000.npy')
-num_episodes = 1000
-N_vm = 1000
+valid_inds = np.load('data/test_random_time_200.npy')
+num_episodes = 200
+N_vm = 5000
 lt_thre = 8000
 num_processes = 14
 
@@ -29,17 +29,13 @@ def run_episode(env: SchedEnv, agent, index, N_vm):
     # env = copy.deepcopy(env)
     state = env.reset(index, N_vm=N_vm)
     done = False
-    latency = []
     while not done:
-        stime = time.time()
         action = agent(state)
-        etime = time.time()
-        latency.append(etime - stime)
         # print(state, action)
         # breakpoint()
         state, _, done = env.step(action)
 
-    return env.total_pm_usage, env.maximum_pm_num, latency
+    return env.total_pm_usage, env.maximum_pm_num
 
 
 def run_episode_online(env: SchedEnv, agent, index, N_vm, lt_thre):
@@ -97,9 +93,10 @@ def runEvaluateOnline(env, agent, run_episode, lt_thre):
 
 def runEvaluate(env, agent, run_episode):
     args = [(env, agent, valid_inds[episode], N_vm) for episode in range(num_episodes)]
-    with Pool(processes=8) as pool:
+    with Pool(processes=num_processes) as pool:
         result = pool.starmap(run_episode, args)
-        
+    
+    # print(result)
     result = np.array(result)
     res = result[:, 0]
     maxi = result[:, 1]
@@ -130,13 +127,13 @@ def main():
 
     # _, _, latency = run_episode(env, first_fit, 0, N_vm)
     # print(latency)
-    # runEvaluate(env, first_fit, run_episode)
+    runEvaluate(env, first_fit, run_episode)
     # runEvaluate(env, best_fit, run_episode)
     # runEvaluate(env, random_fit, run_episode)
     # runEvaluate(env, m2f_fit, run_episode_m2f)
     # runEvaluate(env, bal_fit, run_episode_bal)
     
-    runEvaluateOnline(env, clairvoyant_fit, run_episode_online, lt_thre)
+    # runEvaluateOnline(env, clairvoyant_fit, run_episode_online, lt_thre)
     # run_episode_m2f(env, m2f_fit, 0, N_vm)
     # run_episode_bal(env, bal_fit, 0, N_vm, "max")
     # print(len(env.cluster.active_pms))
